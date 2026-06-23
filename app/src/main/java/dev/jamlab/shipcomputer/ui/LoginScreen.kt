@@ -10,14 +10,17 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -27,13 +30,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.jamlab.shipcomputer.BuildConfig
 import dev.jamlab.shipcomputer.auth.AuthManager
+import dev.jamlab.shipcomputer.update.UpdateChecker
+import dev.jamlab.shipcomputer.update.UpdateResult
 import kotlinx.coroutines.launch
 
 @Composable
@@ -41,11 +48,17 @@ fun LoginScreen(
     authManager: AuthManager,
     onLoginSuccess: () -> Unit
 ) {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val updateChecker = remember { UpdateChecker() }
+
     var email by remember { mutableStateOf(authManager.savedEmail ?: "") }
     var password by remember { mutableStateOf("") }
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var isCheckingUpdate by remember { mutableStateOf(false) }
+    var pendingUpdate by remember { mutableStateOf<UpdateResult?>(null) }
+    var isDownloading by remember { mutableStateOf(false) }
 
     fun doLogin() {
         if (email.isBlank() || password.isBlank() || isLoading) return
@@ -151,10 +164,72 @@ fun LoginScreen(
                         modifier = Modifier.size(20.dp),
                         strokeWidth = 2.dp
                     )
+                    Spacer(Modifier.width(8.dp))
+                    Text("Signing in…")
                 } else {
                     Text("SIGN IN", fontWeight = FontWeight.Medium, letterSpacing = 2.sp)
                 }
             }
+
+            TextButton(
+                onClick = {
+                    isCheckingUpdate = true
+                    scope.launch {
+                        val result = updateChecker.checkForUpdate(BuildConfig.VERSION_NAME)
+                        isCheckingUpdate = false
+                        if (result != null) {
+                            pendingUpdate = result
+                        }
+                        // silently do nothing if already up to date
+                    }
+                },
+                enabled = !isCheckingUpdate,
+                colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFF444466))
+            ) {
+                if (isCheckingUpdate) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(12.dp),
+                        color = Color(0xFF444466),
+                        strokeWidth = 1.5.dp
+                    )
+                    Spacer(Modifier.width(6.dp))
+                }
+                Text("v${BuildConfig.VERSION_NAME}  •  Check for update", fontSize = 12.sp)
+            }
         }
+    }
+
+    pendingUpdate?.let { update ->
+        AlertDialog(
+            onDismissRequest = { pendingUpdate = null },
+            containerColor = Color(0xFF12121A),
+            title = { Text("Update v${update.version} available", color = Color(0xFF00E5FF)) },
+            text = {
+                if (update.releaseNotes.isNotBlank()) {
+                    Text(update.releaseNotes, color = Color.White, fontSize = 14.sp)
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        pendingUpdate = null
+                        isDownloading = true
+                        scope.launch {
+                            updateChecker.downloadAndInstall(context, update.downloadUrl)
+                            isDownloading = false
+                        }
+                    },
+                    enabled = !isDownloading,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00E5FF))
+                ) {
+                    Text("Download & Install", color = Color(0xFF0A0A0F))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingUpdate = null }) {
+                    Text("Later", color = Color.Gray)
+                }
+            }
+        )
     }
 }
