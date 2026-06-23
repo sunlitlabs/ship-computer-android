@@ -95,7 +95,7 @@ fun MainScreen(
                         ): Boolean {
                             if (request.url.toString().contains("/login")) {
                                 scope.launch {
-                                    val result = authManager.reAuthenticate()
+                                    val result = authManager.reAuthenticate(context)
                                     if (result.isSuccess) {
                                         view.loadUrl(AuthManager.BASE_URL + "/live")
                                     } else {

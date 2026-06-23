@@ -69,6 +69,7 @@ fun LoginScreen(
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var isCheckingUpdate by remember { mutableStateOf(false) }
     var pendingUpdate by remember { mutableStateOf<UpdateResult?>(null) }
+    var showUpToDate by remember { mutableStateOf(false) }
     var isDownloading by remember { mutableStateOf(false) }
 
     val emailNode = remember {
@@ -89,7 +90,7 @@ fun LoginScreen(
         isLoading = true
         errorMessage = null
         scope.launch {
-            val result = authManager.login(email.trim(), password)
+            val result = authManager.login(context, email.trim(), password)
             isLoading = false
             result.fold(
                 onSuccess = { onLoginSuccess() },
@@ -217,7 +218,11 @@ fun LoginScreen(
                     scope.launch {
                         val result = updateChecker.checkForUpdate(BuildConfig.VERSION_NAME)
                         isCheckingUpdate = false
-                        if (result != null) pendingUpdate = result
+                        if (result != null) {
+                            pendingUpdate = result
+                        } else {
+                            showUpToDate = true
+                        }
                     }
                 },
                 enabled = !isCheckingUpdate,
@@ -236,11 +241,27 @@ fun LoginScreen(
         }
     }
 
+    // Already up to date
+    if (showUpToDate) {
+        AlertDialog(
+            onDismissRequest = { showUpToDate = false },
+            containerColor = Color(0xFF12121A),
+            title = { Text("Up to date", color = Color(0xFF00E5FF)) },
+            text = { Text("v${BuildConfig.VERSION_NAME} is the latest version.", color = Color.White) },
+            confirmButton = {
+                TextButton(onClick = { showUpToDate = false }) {
+                    Text("OK", color = Color(0xFF00E5FF))
+                }
+            }
+        )
+    }
+
+    // Update available
     pendingUpdate?.let { update ->
         AlertDialog(
             onDismissRequest = { pendingUpdate = null },
             containerColor = Color(0xFF12121A),
-            title = { Text("Update v${update.version} available", color = Color(0xFF00E5FF)) },
+            title = { Text("v${update.version} available", color = Color(0xFF00E5FF)) },
             text = {
                 if (update.releaseNotes.isNotBlank()) {
                     Text(update.releaseNotes, color = Color.White, fontSize = 14.sp)
