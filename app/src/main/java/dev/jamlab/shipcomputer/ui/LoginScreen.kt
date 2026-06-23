@@ -90,7 +90,7 @@ fun LoginScreen(
         isLoading = true
         errorMessage = null
         scope.launch {
-            val result = authManager.login(context, email.trim(), password)
+            val result = authManager.login(email.trim(), password)
             isLoading = false
             result.fold(
                 onSuccess = { onLoginSuccess() },

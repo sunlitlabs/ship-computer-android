@@ -1,21 +1,19 @@
 package dev.jamlab.shipcomputer.auth
 
 import android.content.Context
-import android.os.Handler
-import android.os.Looper
-import android.util.Base64
 import android.webkit.CookieManager
-import android.webkit.JavascriptInterface
-import android.webkit.WebResourceError
-import android.webkit.WebResourceRequest
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
-import kotlin.coroutines.resume
+import okhttp3.Cookie
+import okhttp3.CookieJar
+import okhttp3.FormBody
+import okhttp3.HttpUrl
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.io.IOException
+import java.util.concurrent.TimeUnit
 
 class AuthManager(context: Context) {
 
@@ -33,111 +31,85 @@ class AuthManager(context: Context) {
         EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
     )
 
+    // Stores all cookies received during the login request so we can
+    // inject the session cookie into the WebView's CookieManager.
+    private val cookieStore = mutableListOf<Cookie>()
+    private val cookieJar = object : CookieJar {
+        override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
+            synchronized(cookieStore) {
+                cookieStore.removeAll { e -> cookies.any { it.name == e.name } }
+                cookieStore.addAll(cookies)
+            }
+        }
+        override fun loadForRequest(url: HttpUrl): List<Cookie> =
+            synchronized(cookieStore) { cookieStore.toList() }
+    }
+
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .cookieJar(cookieJar)
+        .build()
+
     val savedEmail: String? get() = prefs.getString(KEY_EMAIL, null)
     val savedPassword: String? get() = prefs.getString(KEY_PASSWORD, null)
     val isLoggedIn: Boolean get() = savedEmail != null && savedPassword != null
 
     /**
-     * Authenticates using a hidden WebView that loads the real Livewire login page,
-     * fills the form via JS, then polls window.location via a JS interface to detect
-     * the redirect that follows successful authentication.
-     *
-     * Pass an Activity context so the WebView initialises properly.
+     * Authenticates via POST /auth/mobile — a CSRF-exempt endpoint that
+     * validates credentials, starts a Laravel session, and returns a session
+     * cookie in the response. The cookie is injected into the system
+     * CookieManager so the main WebView can load /live without further auth.
      */
-    suspend fun login(activityContext: Context, email: String, password: String): Result<Unit> =
-        withContext(Dispatchers.Main) {
-            suspendCancellableCoroutine { continuation ->
-                val webView = WebView(activityContext)
-                webView.settings.apply {
-                    javaScriptEnabled = true
-                    domStorageEnabled = true
-                }
-                CookieManager.getInstance().setAcceptCookie(true)
-                CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
+    suspend fun login(email: String, password: String): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            try {
+                val body = FormBody.Builder()
+                    .add("email", email)
+                    .add("password", password)
+                    .build()
 
-                var loginSubmitted = false
-                var settled = false
-                val mainHandler = Handler(Looper.getMainLooper())
+                val request = Request.Builder()
+                    .url("$BASE_URL/auth/mobile")
+                    .post(body)
+                    .header("Accept", "application/json")
+                    .build()
 
-                // Always call resume() first; clean up WebView on the next loop tick.
-                fun settle(result: Result<Unit>) {
-                    if (settled) return
-                    settled = true
-                    mainHandler.removeCallbacksAndMessages(null)
-                    CookieManager.getInstance().flush()
-                    if (result.isSuccess) {
+                val code = client.newCall(request).execute().use { it.code }
+
+                when (code) {
+                    200 -> {
+                        // Inject the session cookie the server set into the WebView
+                        withContext(Dispatchers.Main) {
+                            synchronized(cookieStore) {
+                                cookieStore.forEach { cookie ->
+                                    CookieManager.getInstance().setCookie(
+                                        BASE_URL,
+                                        "${cookie.name}=${cookie.value}; path=/"
+                                    )
+                                }
+                            }
+                            CookieManager.getInstance().flush()
+                        }
                         prefs.edit()
                             .putString(KEY_EMAIL, email)
                             .putString(KEY_PASSWORD, password)
                             .apply()
+                        Result.success(Unit)
                     }
-                    continuation.resume(result)
-                    // Defer WebView cleanup to avoid destroy() inside a WebView callback
-                    mainHandler.post {
-                        runCatching { webView.stopLoading() }
-                        runCatching { webView.destroy() }
-                    }
+                    401 -> Result.failure(Exception("Invalid email or password"))
+                    429 -> Result.failure(Exception("Too many attempts — try again later"))
+                    else -> Result.failure(Exception("Server error ($code)"))
                 }
-
-                // JS → Android bridge: called by the polling loop injected into the page
-                webView.addJavascriptInterface(
-                    object {
-                        @JavascriptInterface
-                        fun onLoginSuccess() = mainHandler.post { settle(Result.success(Unit)) }
-
-                        @JavascriptInterface
-                        fun onLoginFailure(reason: String) = mainHandler.post {
-                            settle(Result.failure(Exception(reason)))
-                        }
-                    },
-                    "ShipAuth"
-                )
-
-                webView.webViewClient = object : WebViewClient() {
-                    override fun onPageFinished(view: WebView, url: String) {
-                        when {
-                            !loginSubmitted && url.contains("/login") -> {
-                                loginSubmitted = true
-                                fillSubmitAndPoll(view, email, password)
-                                // Hard timeout: if the page never navigates away, credentials wrong
-                                mainHandler.postDelayed({
-                                    settle(Result.failure(Exception("Invalid email or password")))
-                                }, 12_000)
-                            }
-                            // Full-page redirect away from /login — auth succeeded
-                            loginSubmitted && !url.contains("/login") -> settle(Result.success(Unit))
-                            // Full-page redirect BACK to /login — wrong credentials
-                            loginSubmitted && url.contains("/login") -> {
-                                settle(Result.failure(Exception("Invalid email or password")))
-                            }
-                        }
-                    }
-
-                    override fun onReceivedError(
-                        view: WebView,
-                        request: WebResourceRequest,
-                        error: WebResourceError
-                    ) {
-                        if (request.isForMainFrame) {
-                            settle(Result.failure(Exception("Cannot connect to computer.jamlab.dev")))
-                        }
-                    }
-                }
-
-                webView.loadUrl("$BASE_URL/login")
-
-                continuation.invokeOnCancellation {
-                    settled = true
-                    mainHandler.removeCallbacksAndMessages(null)
-                    runCatching { webView.destroy() }
-                }
+            } catch (e: IOException) {
+                Result.failure(Exception("Cannot connect to computer.jamlab.dev"))
             }
         }
 
-    suspend fun reAuthenticate(activityContext: Context): Result<Unit> {
+    suspend fun reAuthenticate(): Result<Unit> {
         val email = savedEmail ?: return Result.failure(Exception("No saved credentials"))
         val password = savedPassword ?: return Result.failure(Exception("No saved credentials"))
-        return login(activityContext, email, password)
+        return login(email, password)
     }
 
     fun logout() {
@@ -150,45 +122,5 @@ class AuthManager(context: Context) {
         const val BASE_URL = "https://computer.jamlab.dev"
         private const val KEY_EMAIL = "email"
         private const val KEY_PASSWORD = "password"
-
-        private fun fillSubmitAndPoll(view: WebView, email: String, password: String) {
-            val e64 = Base64.encodeToString(email.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
-            val p64 = Base64.encodeToString(password.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
-            view.evaluateJavascript("""
-                (function() {
-                    var e = atob('$e64');
-                    var p = atob('$p64');
-                    var emailEl = document.getElementById('email');
-                    var passEl  = document.getElementById('password');
-                    if (!emailEl || !passEl) {
-                        ShipAuth.onLoginFailure('Login form not found on page');
-                        return;
-                    }
-                    var setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-                    setter.call(emailEl, e);
-                    emailEl.dispatchEvent(new Event('input', { bubbles: true }));
-                    setter.call(passEl, p);
-                    passEl.dispatchEvent(new Event('input', { bubbles: true }));
-
-                    // Poll window.location — works for both SPA (pushState) and full-page redirects
-                    var polls = 0;
-                    var poll = setInterval(function() {
-                        polls++;
-                        if (window.location.pathname.indexOf('/login') === -1) {
-                            clearInterval(poll);
-                            ShipAuth.onLoginSuccess();
-                        } else if (polls > 24) {
-                            // 24 × 500ms = 12s — matches the Android timeout
-                            clearInterval(poll);
-                        }
-                    }, 500);
-
-                    setTimeout(function() {
-                        var btn = document.querySelector('button[type="submit"]');
-                        if (btn) btn.click();
-                    }, 500);
-                })();
-            """.trimIndent(), null)
-        }
     }
 }
