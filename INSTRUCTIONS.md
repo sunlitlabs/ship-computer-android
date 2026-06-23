@@ -192,20 +192,98 @@ The Settings screen should guide the user to enable "Install unknown apps" if th
 
 ---
 
-## Release Process (APK in GitHub Releases)
+## Release Process — Claude Does This Automatically
 
-1. Increment `versionCode` (+1 integer) and `versionName` (semver string) in `app/build.gradle`
-2. Build signed release APK: `./gradlew assembleRelease`
-   - Signing key config in `keystore.properties` (not committed — add to `.gitignore`)
-3. Create a GitHub Release:
-   - Tag: `v{versionName}` (e.g. `v1.2.0`)
-   - Title: `Ship Computer Android v{versionName}`
-   - Body: release notes
-   - Attach: `app/release/app-release.apk` as a release asset
-4. The update checker in the app will find the new release automatically
+After completing **every task** that changes app behavior or fixes a bug, Claude must:
 
-**Do not commit APK files to the repo** — use GitHub Releases instead.
-APKs are large binaries that don't diff well; Releases keep the repo clean.
+1. **Bump the version** in `app/build.gradle.kts`:
+   - Increment `versionCode` by 1 (integer, monotonically increasing)
+   - Increment `versionName` patch segment (e.g. `1.0.0` → `1.0.1`); increment minor for new features
+2. **Build the signed release APK**:
+   ```bash
+   cd C:\Users\xtrao\Development\Android\ship-computer
+   ./gradlew assembleRelease
+   # Output: app/release/app-release.apk
+   ```
+3. **Commit and push** code + version bump (do NOT commit the APK itself):
+   ```bash
+   git add -A
+   git commit -m "..."
+   git push
+   ```
+4. **Create a GitHub Release** with the APK attached:
+   ```bash
+   gh release create v{versionName} app/release/app-release.apk \
+     --repo sunlitlabs/ship-computer-android \
+     --title "Ship Computer Android v{versionName}" \
+     --notes "{brief description of what changed}"
+   ```
+
+The app's self-update checker polls `api.github.com/repos/sunlitlabs/ship-computer-android/releases/latest`
+and will surface this release to users automatically.
+
+**Do not commit APK files to the repo** — Releases only. APKs are large binaries that
+don't diff well; Releases keep the repo clean.
+
+### One-time prerequisites (set up manually before first Claude session)
+
+These must be in place before Claude can run the release workflow:
+
+**1. GitHub repo**
+Create `https://github.com/sunlitlabs/ship-computer-android` and push the initial project.
+Authenticate `gh` CLI: `gh auth login`.
+
+**2. Signing keystore**
+```bash
+keytool -genkey -v \
+  -keystore C:\Users\xtrao\Development\Android\ship-computer\ship-computer.jks \
+  -alias ship-computer \
+  -keyalg RSA -keysize 2048 -validity 10000
+```
+Create `keystore.properties` in the project root (never commit this file):
+```properties
+storeFile=C:/Users/xtrao/Development/Android/ship-computer/ship-computer.jks
+storePassword=<your password>
+keyAlias=ship-computer
+keyPassword=<your password>
+```
+Add to `.gitignore`:
+```
+keystore.properties
+*.jks
+*.keystore
+```
+Wire `keystore.properties` into `app/build.gradle.kts`:
+```kotlin
+val keystoreProps = java.util.Properties().also { props ->
+    val f = rootProject.file("keystore.properties")
+    if (f.exists()) props.load(f.inputStream())
+}
+android {
+    signingConfigs {
+        create("release") {
+            storeFile = file(keystoreProps["storeFile"] as String)
+            storePassword = keystoreProps["storePassword"] as String
+            keyAlias = keystoreProps["keyAlias"] as String
+            keyPassword = keystoreProps["keyPassword"] as String
+        }
+    }
+    buildTypes {
+        release {
+            signingConfig = signingConfigs.getByName("release")
+            isMinifyEnabled = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+        }
+    }
+}
+```
+
+**3. Android SDK / Gradle**
+Android Studio must be installed and the SDK path set in `local.properties`:
+```properties
+sdk.dir=C\:\\Users\\xtrao\\AppData\\Local\\Android\\Sdk
+```
+(Android Studio writes this automatically when you open the project.)
 
 ---
 

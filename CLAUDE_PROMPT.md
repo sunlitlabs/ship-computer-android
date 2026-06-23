@@ -226,9 +226,33 @@ android {
 - Do not add analytics, crash reporting, or any third-party SDKs beyond what's listed
 - Do not add a login-with-Google or OAuth flow — email/password only
 
+### Release workflow — do this after EVERY task
+
+After completing any task (including the initial build), you must:
+
+1. Bump `versionCode` (+1) and `versionName` patch segment in `app/build.gradle.kts`
+2. Build the signed release APK:
+   ```
+   ./gradlew assembleRelease
+   ```
+3. Commit and push the code (do NOT include the APK in the commit):
+   ```
+   git add -A && git commit -m "..." && git push
+   ```
+4. Create a GitHub Release with the APK attached:
+   ```
+   gh release create v{versionName} app/release/app-release.apk \
+     --repo sunlitlabs/ship-computer-android \
+     --title "Ship Computer Android v{versionName}" \
+     --notes "{what changed}"
+   ```
+
+This is mandatory — not optional. The APK in the GitHub Release is how the user installs
+and updates the app on their phone. The one-time keystore setup required for signing is
+documented in INSTRUCTIONS.md under "One-time prerequisites."
+
 ### Deliverable format
 
 Write all files in full — no placeholders, no `// TODO`, no truncated code blocks.
-Every file should be complete and compilable. After writing all files, summarize
-what the developer needs to do to build and run it (Android Studio version, SDK setup,
-keystore setup for signing).
+Every file should be complete and compilable. After writing all files, run the release
+workflow above to produce the first APK and GitHub Release.
