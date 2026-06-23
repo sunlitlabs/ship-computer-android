@@ -28,8 +28,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.autofill.AutofillNode
+import androidx.compose.ui.autofill.AutofillType
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalAutofill
+import androidx.compose.ui.platform.LocalAutofillTree
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -43,6 +51,7 @@ import dev.jamlab.shipcomputer.update.UpdateChecker
 import dev.jamlab.shipcomputer.update.UpdateResult
 import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun LoginScreen(
     authManager: AuthManager,
@@ -51,6 +60,8 @@ fun LoginScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val updateChecker = remember { UpdateChecker() }
+    val autofill = LocalAutofill.current
+    val autofillTree = LocalAutofillTree.current
 
     var email by remember { mutableStateOf(authManager.savedEmail ?: "") }
     var password by remember { mutableStateOf("") }
@@ -59,6 +70,19 @@ fun LoginScreen(
     var isCheckingUpdate by remember { mutableStateOf(false) }
     var pendingUpdate by remember { mutableStateOf<UpdateResult?>(null) }
     var isDownloading by remember { mutableStateOf(false) }
+
+    val emailNode = remember {
+        AutofillNode(
+            autofillTypes = listOf(AutofillType.EmailAddress),
+            onFill = { email = it }
+        ).also { autofillTree += it }
+    }
+    val passwordNode = remember {
+        AutofillNode(
+            autofillTypes = listOf(AutofillType.Password),
+            onFill = { password = it }
+        ).also { autofillTree += it }
+    }
 
     fun doLogin() {
         if (email.isBlank() || password.isBlank() || isLoading) return
@@ -115,7 +139,15 @@ fun LoginScreen(
                     focusedTextColor = Color.White,
                     unfocusedTextColor = Color.White
                 ),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onGloballyPositioned { emailNode.boundingBox = it.boundsInWindow() }
+                    .onFocusChanged { state ->
+                        autofill?.run {
+                            if (state.isFocused) requestAutofillForNode(emailNode)
+                            else cancelAutofillForNode(emailNode)
+                        }
+                    }
             )
 
             OutlinedTextField(
@@ -138,7 +170,15 @@ fun LoginScreen(
                     focusedTextColor = Color.White,
                     unfocusedTextColor = Color.White
                 ),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onGloballyPositioned { passwordNode.boundingBox = it.boundsInWindow() }
+                    .onFocusChanged { state ->
+                        autofill?.run {
+                            if (state.isFocused) requestAutofillForNode(passwordNode)
+                            else cancelAutofillForNode(passwordNode)
+                        }
+                    }
             )
 
             errorMessage?.let {
@@ -177,10 +217,7 @@ fun LoginScreen(
                     scope.launch {
                         val result = updateChecker.checkForUpdate(BuildConfig.VERSION_NAME)
                         isCheckingUpdate = false
-                        if (result != null) {
-                            pendingUpdate = result
-                        }
-                        // silently do nothing if already up to date
+                        if (result != null) pendingUpdate = result
                     }
                 },
                 enabled = !isCheckingUpdate,

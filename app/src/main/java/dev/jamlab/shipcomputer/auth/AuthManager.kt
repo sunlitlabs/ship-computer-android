@@ -1,8 +1,10 @@
 package dev.jamlab.shipcomputer.auth
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
+import android.util.Base64
 import android.webkit.CookieManager
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -35,12 +37,6 @@ class AuthManager(context: Context) {
     val savedPassword: String? get() = prefs.getString(KEY_PASSWORD, null)
     val isLoggedIn: Boolean get() = savedEmail != null && savedPassword != null
 
-    /**
-     * Authenticates by loading the real login page in a hidden WebView, filling
-     * the Livewire form via JS, and detecting the post-login redirect.
-     * Uses the system CookieManager, so the session cookie is automatically
-     * available to the main WebView when this returns.
-     */
     suspend fun login(email: String, password: String): Result<Unit> =
         withContext(Dispatchers.Main) {
             suspendCancellableCoroutine { continuation ->
@@ -72,25 +68,39 @@ class AuthManager(context: Context) {
                     continuation.resume(result)
                 }
 
+                fun isLoginUrl(url: String) = url.contains("/login")
+
                 webView.webViewClient = object : WebViewClient() {
+
+                    // Catches Livewire SPA navigation (history.pushState / wire:navigate)
+                    // which does NOT trigger onPageStarted or onPageFinished
+                    override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
+                        super.doUpdateVisitedHistory(view, url, isReload)
+                        if (loginSubmitted && !isLoginUrl(url)) {
+                            settle(Result.success(Unit))
+                        }
+                    }
+
+                    // Catches full-page navigations at the earliest point
+                    override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
+                        if (loginSubmitted && !isLoginUrl(url)) {
+                            settle(Result.success(Unit))
+                        }
+                    }
+
                     override fun onPageFinished(view: WebView, url: String) {
                         when {
-                            // Navigated away from /login — auth succeeded
-                            loginSubmitted && !url.contains("/login") -> {
-                                settle(Result.success(Unit))
-                            }
-                            // Login page loaded — fill and submit the Livewire form
-                            !loginSubmitted && url.contains("/login") -> {
+                            !loginSubmitted && isLoginUrl(url) -> {
                                 loginSubmitted = true
                                 fillAndSubmit(view, email, password)
-                                // Livewire auth is async; give it time to redirect on success.
-                                // If it hasn't navigated away after 10s the credentials are wrong.
+                                // Fallback: if nothing navigates within 10s, credentials are wrong
                                 timeoutHandler.postDelayed({
                                     settle(Result.failure(Exception("Invalid email or password")))
                                 }, 10_000)
                             }
-                            // Redirected back to /login after submitting — wrong credentials
-                            loginSubmitted && url.contains("/login") -> {
+                            loginSubmitted && !isLoginUrl(url) -> settle(Result.success(Unit))
+                            loginSubmitted && isLoginUrl(url) -> {
+                                // Full-page redirect back to /login = wrong credentials
                                 settle(Result.failure(Exception("Invalid email or password")))
                             }
                         }
@@ -135,25 +145,26 @@ class AuthManager(context: Context) {
         private const val KEY_PASSWORD = "password"
 
         private fun fillAndSubmit(view: WebView, email: String, password: String) {
-            // Escape for JS string literal
-            val e = email.replace("\\", "\\\\").replace("'", "\\'")
-            val p = password.replace("\\", "\\\\").replace("'", "\\'")
+            // base64-encode credentials so no JS string escaping is needed at all
+            val e64 = Base64.encodeToString(email.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+            val p64 = Base64.encodeToString(password.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
             view.evaluateJavascript("""
                 (function() {
+                    var e = atob('$e64');
+                    var p = atob('$p64');
                     var emailEl = document.getElementById('email');
                     var passEl  = document.getElementById('password');
                     if (!emailEl || !passEl) return;
-                    // Use native setter so Alpine/Livewire wire:model picks up the change
+                    // Native setter is required so Alpine/Livewire wire:model detects the change
                     var setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-                    setter.call(emailEl, '$e');
+                    setter.call(emailEl, e);
                     emailEl.dispatchEvent(new Event('input', { bubbles: true }));
-                    setter.call(passEl, '$p');
+                    setter.call(passEl, p);
                     passEl.dispatchEvent(new Event('input', { bubbles: true }));
-                    // Short delay so Livewire has time to sync state before submit
                     setTimeout(function() {
                         var btn = document.querySelector('button[type="submit"]');
                         if (btn) btn.click();
-                    }, 400);
+                    }, 500);
                 })();
             """.trimIndent(), null)
         }
