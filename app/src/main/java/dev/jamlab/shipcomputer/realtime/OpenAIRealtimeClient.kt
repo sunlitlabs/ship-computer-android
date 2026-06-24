@@ -34,7 +34,6 @@ class OpenAIRealtimeClient(
         val req = Request.Builder()
             .url("wss://api.openai.com/v1/realtime?model=${session.model}")
             .header("Authorization", "Bearer ${session.clientSecret}")
-            .header("OpenAI-Beta", "realtime=v1")
             .build()
 
         ws = client.newWebSocket(req, object : WebSocketListener() {
