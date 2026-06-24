@@ -46,6 +46,8 @@ class UpdateChecker {
             val req = Request.Builder()
                 .url("https://api.github.com/repos/sunlitlabs/ship-computer-android/releases/latest")
                 .header("Accept", "application/vnd.github+json")
+                .header("X-GitHub-Api-Version", "2022-11-28")
+                .header("Cache-Control", "no-cache")
                 .build()
             val body = client.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) return@withContext null
