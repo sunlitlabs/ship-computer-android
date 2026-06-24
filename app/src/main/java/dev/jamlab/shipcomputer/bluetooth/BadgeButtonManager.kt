@@ -4,55 +4,44 @@ import android.content.Context
 import android.os.Bundle
 import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
-import android.webkit.WebView
+import dev.jamlab.shipcomputer.service.AudioForegroundService
 
 class BadgeButtonManager(private val context: Context) {
 
     private var mediaSession: MediaSessionCompat? = null
-    private var webView: WebView? = null
 
-    fun attach(webView: WebView) {
-        this.webView = webView
-        setupMediaSession()
-    }
-
-    private fun setupMediaSession() {
+    fun setup() {
         val session = MediaSessionCompat(context, "ShipComputerBadge")
         session.setFlags(
             MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS or
                 MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS
         )
-        val state = PlaybackStateCompat.Builder()
-            .setActions(
-                PlaybackStateCompat.ACTION_PLAY or
-                    PlaybackStateCompat.ACTION_PAUSE or
-                    PlaybackStateCompat.ACTION_PLAY_PAUSE
-            )
-            .setState(PlaybackStateCompat.STATE_PLAYING, 0, 1f)
-            .build()
-        session.setPlaybackState(state)
+        session.setPlaybackState(
+            PlaybackStateCompat.Builder()
+                .setActions(
+                    PlaybackStateCompat.ACTION_PLAY or
+                        PlaybackStateCompat.ACTION_PAUSE or
+                        PlaybackStateCompat.ACTION_PLAY_PAUSE
+                )
+                .setState(PlaybackStateCompat.STATE_PLAYING, 0, 1f)
+                .build()
+        )
         session.setCallback(object : MediaSessionCompat.Callback() {
-            override fun onPlay() = bridgeToWebView()
-            override fun onPause() = bridgeToWebView()
-            override fun onPlayFromMediaId(mediaId: String?, extras: Bundle?) = bridgeToWebView()
+            override fun onPlay()  = fire()
+            override fun onPause() = fire()
+            override fun onPlayFromMediaId(mediaId: String?, extras: Bundle?) = fire()
         })
         session.isActive = true
         mediaSession = session
     }
 
-    fun bridgeToWebView() {
-        webView?.post {
-            webView?.evaluateJavascript(
-                "window.dispatchEvent(new KeyboardEvent('keydown',{key:'MediaPlayPause',bubbles:true}))",
-                null
-            )
-        }
+    private fun fire() {
+        AudioForegroundService.onBadgePress?.invoke()
     }
 
     fun release() {
         mediaSession?.isActive = false
         mediaSession?.release()
         mediaSession = null
-        webView = null
     }
 }

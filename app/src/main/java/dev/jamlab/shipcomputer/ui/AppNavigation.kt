@@ -12,13 +12,13 @@ fun AppNavigation(authManager: AuthManager) {
     var isLoggedIn by remember { mutableStateOf(authManager.isLoggedIn) }
 
     if (isLoggedIn) {
-        MainScreen(
+        NativeVoiceScreen(
             authManager = authManager,
-            onLogout = { isLoggedIn = false }
+            onLogout    = { isLoggedIn = false }
         )
     } else {
         LoginScreen(
-            authManager = authManager,
+            authManager    = authManager,
             onLoginSuccess = { isLoggedIn = true }
         )
     }

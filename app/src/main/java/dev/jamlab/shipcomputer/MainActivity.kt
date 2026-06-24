@@ -12,6 +12,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import dev.jamlab.shipcomputer.auth.AuthManager
+import dev.jamlab.shipcomputer.bluetooth.BadgeButtonManager
 import dev.jamlab.shipcomputer.ui.AppNavigation
 import dev.jamlab.shipcomputer.ui.theme.ShipComputerTheme
 
@@ -21,15 +22,19 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_ASSISTANT_LAUNCH = "dev.jamlab.shipcomputer.ASSISTANT_LAUNCH"
     }
 
+    private val badgeManager by lazy { BadgeButtonManager(this) }
+
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { /* proceed regardless; WebView will re-request mic if needed */ }
+    ) { /* proceed regardless */ }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         applyAssistantWindowFlags(intent)
         requestMissingPermissions()
+        badgeManager.setup()
+
         val authManager = AuthManager(this)
         setContent {
             ShipComputerTheme {
@@ -38,17 +43,19 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // Called when the Activity is already running and brought back to front
-    // (e.g. badge press while app is backgrounded with screen off).
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         applyAssistantWindowFlags(intent)
     }
 
+    override fun onDestroy() {
+        super.onDestroy()
+        badgeManager.release()
+    }
+
     private fun applyAssistantWindowFlags(intent: Intent?) {
         if (intent?.getBooleanExtra(EXTRA_ASSISTANT_LAUNCH, false) != true) return
-        // Show over the lock screen and turn the screen on when triggered as assistant.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true)
             setTurnScreenOn(true)
@@ -71,8 +78,6 @@ class MainActivity : ComponentActivity() {
         val missing = required.filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
-        if (missing.isNotEmpty()) {
-            permissionLauncher.launch(missing.toTypedArray())
-        }
+        if (missing.isNotEmpty()) permissionLauncher.launch(missing.toTypedArray())
     }
 }
