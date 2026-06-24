@@ -103,6 +103,10 @@ class AudioForegroundService : Service() {
 
         var webViewRef: WebView? = null
 
+        // Set by ShipVoiceSessionService when the app isn't running (or WebView isn't loaded yet).
+        // Consumed in MainScreen.onPageFinished to trigger startListening() after page load.
+        @Volatile var pendingAutoStart = false
+
         fun start(context: Context, webView: WebView) {
             webViewRef = webView
             context.startForegroundService(

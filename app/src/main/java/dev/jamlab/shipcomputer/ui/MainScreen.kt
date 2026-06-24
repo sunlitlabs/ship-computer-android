@@ -149,6 +149,22 @@ fun MainScreen(
                             if (url.contains("/live")) {
                                 AudioForegroundService.start(context, view)
                                 view.evaluateJavascript(getUserMediaRetryJs, null)
+                                if (AudioForegroundService.pendingAutoStart) {
+                                    AudioForegroundService.pendingAutoStart = false
+                                    // Delay 1.5 s to let Alpine initialize before calling startListening()
+                                    view.postDelayed({
+                                        view.evaluateJavascript("""
+                                            (function(){
+                                                var app=window.shipVoiceApp;
+                                                if(app&&typeof app.startListening==='function'&&!app.micOpen&&app.status!=='connecting'){
+                                                    app.startListening();
+                                                } else {
+                                                    window.dispatchEvent(new CustomEvent('ship:assistantActivate'));
+                                                }
+                                            })()
+                                        """.trimIndent(), null)
+                                    }, 1500L)
+                                }
                             }
                         }
 
