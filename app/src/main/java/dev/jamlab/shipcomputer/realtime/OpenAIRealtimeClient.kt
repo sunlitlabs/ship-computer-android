@@ -7,7 +7,6 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
-import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
@@ -38,7 +37,9 @@ class OpenAIRealtimeClient(
 
         ws = client.newWebSocket(req, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                sendSessionUpdate(webSocket)
+                // Session is pre-configured by the server when it creates the client_secret
+                // (POST /v1/realtime/client_secrets) — voice, VAD, prompt, tools are already set.
+                // No session.update needed; just start streaming audio.
                 onReady()
             }
 
@@ -55,31 +56,6 @@ class OpenAIRealtimeClient(
                 onClosed()
             }
         })
-    }
-
-    private fun sendSessionUpdate(webSocket: WebSocket) {
-        val turnDetection = if (session.turnDetectionEnabled) {
-            JSONObject().apply {
-                put("type", "server_vad")
-                put("silence_duration_ms", session.turnDetectionSilenceMs)
-                put("threshold", 0.5)
-                put("prefix_padding_ms", 300)
-            }
-        } else {
-            JSONObject.NULL
-        }
-
-        val update = JSONObject().apply {
-            put("type", "session.update")
-            put("session", JSONObject().apply {
-                put("modalities", JSONArray().put("audio").put("text"))
-                put("voice", session.voice)
-                put("input_audio_format", "pcm16")
-                put("output_audio_format", "pcm16")
-                put("turn_detection", turnDetection)
-            })
-        }
-        webSocket.send(update.toString())
     }
 
     private fun handleEvent(event: JSONObject) {
