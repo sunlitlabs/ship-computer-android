@@ -45,6 +45,27 @@ import dev.jamlab.shipcomputer.bluetooth.BadgeButtonManager
 import dev.jamlab.shipcomputer.service.AudioForegroundService
 import kotlinx.coroutines.launch
 
+// Wraps getUserMedia with retry-on-NotReadableError. On Android WebView, Chrome opens
+// AudioRecord internally when any audio sender is added to an RTCPeerConnection (even the
+// silent AudioContext track used in connect()). The subsequent getUserMedia() call tries
+// a second AudioRecord path and fails. Retrying with a short back-off gives Chrome's
+// WebRTC pipeline time to settle before the real mic capture is attempted.
+private val getUserMediaRetryJs = """
+(function(){
+    if(!navigator.mediaDevices||navigator.mediaDevices._shipPatched)return;
+    const orig=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    navigator.mediaDevices.getUserMedia=async function(c){
+        for(let i=0;i<4;i++){
+            try{return await orig(c);}catch(e){
+                if(e.name!=='NotReadableError'||i>=3)throw e;
+                await new Promise(r=>setTimeout(r,300*(i+1)));
+            }
+        }
+    };
+    navigator.mediaDevices._shipPatched=true;
+})();
+""".trimIndent()
+
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun MainScreen(
@@ -127,6 +148,7 @@ fun MainScreen(
                             loadError.value = null
                             if (url.contains("/live")) {
                                 AudioForegroundService.start(context, view)
+                                view.evaluateJavascript(getUserMediaRetryJs, null)
                             }
                         }
 
