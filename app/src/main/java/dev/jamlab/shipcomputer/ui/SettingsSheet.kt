@@ -15,8 +15,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -47,11 +45,10 @@ fun SettingsSheet(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val updateChecker = remember { UpdateChecker() }
-    val snackbarHostState = remember { SnackbarHostState() }
-
     var isCheckingUpdate by remember { mutableStateOf(false) }
     var pendingUpdate by remember { mutableStateOf<UpdateResult?>(null) }
     var isDownloading by remember { mutableStateOf(false) }
+    var updateStatusMessage by remember { mutableStateOf<String?>(null) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -80,17 +77,26 @@ fun SettingsSheet(
 
             HorizontalDivider(color = Color(0xFF333344))
 
+            updateStatusMessage?.let { msg ->
+                Text(msg, color = Color(0xFF00E5FF), fontSize = 13.sp,
+                    modifier = Modifier.fillMaxWidth())
+            }
+
             Button(
                 onClick = {
                     isCheckingUpdate = true
+                    updateStatusMessage = null
                     scope.launch {
-                        val result = updateChecker.checkForUpdate(BuildConfig.VERSION_NAME)
-                        isCheckingUpdate = false
-                        if (result != null) {
-                            pendingUpdate = result
-                        } else {
-                            snackbarHostState.showSnackbar("Up to date")
-                        }
+                        runCatching { updateChecker.checkForUpdate(BuildConfig.VERSION_NAME) }
+                            .onSuccess { result ->
+                                isCheckingUpdate = false
+                                if (result != null) pendingUpdate = result
+                                else updateStatusMessage = "v${BuildConfig.VERSION_NAME} is up to date"
+                            }
+                            .onFailure { e ->
+                                isCheckingUpdate = false
+                                updateStatusMessage = "Check failed: ${e.message}"
+                            }
                     }
                 },
                 enabled = !isCheckingUpdate,
@@ -123,7 +129,6 @@ fun SettingsSheet(
             }
         }
 
-        SnackbarHost(hostState = snackbarHostState)
     }
 
     pendingUpdate?.let { update ->

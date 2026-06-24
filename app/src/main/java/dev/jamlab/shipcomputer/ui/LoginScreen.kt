@@ -5,12 +5,15 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
@@ -102,7 +105,8 @@ fun LoginScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF0A0A0F)),
+            .background(Color(0xFF0A0A0F))
+            .windowInsetsPadding(WindowInsets.systemBars),
         contentAlignment = Alignment.Center
     ) {
         Column(
@@ -216,13 +220,15 @@ fun LoginScreen(
                 onClick = {
                     isCheckingUpdate = true
                     scope.launch {
-                        val result = updateChecker.checkForUpdate(BuildConfig.VERSION_NAME)
-                        isCheckingUpdate = false
-                        if (result != null) {
-                            pendingUpdate = result
-                        } else {
-                            showUpToDate = true
-                        }
+                        runCatching { updateChecker.checkForUpdate(BuildConfig.VERSION_NAME) }
+                            .onSuccess { result ->
+                                isCheckingUpdate = false
+                                if (result != null) pendingUpdate = result else showUpToDate = true
+                            }
+                            .onFailure { e ->
+                                isCheckingUpdate = false
+                                errorMessage = "Update check failed: ${e.message}"
+                            }
                     }
                 },
                 enabled = !isCheckingUpdate,

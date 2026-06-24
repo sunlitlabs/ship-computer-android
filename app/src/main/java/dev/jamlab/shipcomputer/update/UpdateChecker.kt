@@ -41,25 +41,24 @@ class UpdateChecker {
         .readTimeout(60, TimeUnit.SECONDS)
         .build()
 
+    // Throws on network/parse errors so callers can show a real message.
     suspend fun checkForUpdate(currentVersion: String): UpdateResult? = withContext(Dispatchers.IO) {
-        try {
-            val req = Request.Builder()
-                .url("https://api.github.com/repos/sunlitlabs/ship-computer-android/releases/latest")
-                .header("Accept", "application/vnd.github+json")
-                .header("X-GitHub-Api-Version", "2022-11-28")
-                .header("Cache-Control", "no-cache")
-                .build()
-            val body = client.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) return@withContext null
-                resp.body?.string() ?: return@withContext null
-            }
-            val release = json.decodeFromString<GitHubRelease>(body)
-            val latest = release.tagName.trimStart('v')
-            val url = release.assets.firstOrNull()?.downloadUrl ?: return@withContext null
-            if (isNewer(latest, currentVersion)) UpdateResult(latest, url, release.body) else null
-        } catch (e: Exception) {
-            null
+        val req = Request.Builder()
+            .url("https://api.github.com/repos/sunlitlabs/ship-computer-android/releases/latest")
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .header("Cache-Control", "no-cache")
+            .build()
+        val responseBody = client.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) throw Exception("GitHub returned ${resp.code}")
+            resp.body?.string() ?: throw Exception("Empty response from GitHub")
         }
+        val release = json.decodeFromString<GitHubRelease>(responseBody)
+        val latest = release.tagName.trimStart('v')
+        // Fall back to the predictable release asset URL if the assets list is temporarily empty
+        val url = release.assets.firstOrNull()?.downloadUrl
+            ?: "https://github.com/sunlitlabs/ship-computer-android/releases/download/v$latest/app-release.apk"
+        if (isNewer(latest, currentVersion)) UpdateResult(latest, url, release.body) else null
     }
 
     suspend fun downloadAndInstall(context: Context, downloadUrl: String) = withContext(Dispatchers.IO) {

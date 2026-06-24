@@ -1,9 +1,6 @@
 package dev.jamlab.shipcomputer.bluetooth
 
 import android.content.Context
-import android.media.AudioAttributes
-import android.media.AudioFocusRequest
-import android.media.AudioManager
 import android.os.Bundle
 import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
@@ -13,7 +10,6 @@ class BadgeButtonManager(private val context: Context) {
 
     private var mediaSession: MediaSessionCompat? = null
     private var webView: WebView? = null
-    private var pendingFocusRequest: AudioFocusRequest? = null
 
     fun attach(webView: WebView) {
         this.webView = webView
@@ -44,8 +40,7 @@ class BadgeButtonManager(private val context: Context) {
         mediaSession = session
     }
 
-    private fun bridgeToWebView() {
-        claimAudioFocus()
+    fun bridgeToWebView() {
         webView?.post {
             webView?.evaluateJavascript(
                 "window.dispatchEvent(new KeyboardEvent('keydown',{key:'MediaPlayPause',bubbles:true}))",
@@ -54,27 +49,7 @@ class BadgeButtonManager(private val context: Context) {
         }
     }
 
-    private fun claimAudioFocus() {
-        val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
-            .setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                    .build()
-            )
-            .setWillPauseWhenDucked(false)
-            .build()
-        pendingFocusRequest = req
-        am.requestAudioFocus(req)
-    }
-
     fun release() {
-        pendingFocusRequest?.let { req ->
-            (context.getSystemService(Context.AUDIO_SERVICE) as AudioManager)
-                .abandonAudioFocusRequest(req)
-            pendingFocusRequest = null
-        }
         mediaSession?.isActive = false
         mediaSession?.release()
         mediaSession = null

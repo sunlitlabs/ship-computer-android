@@ -1,6 +1,7 @@
 package dev.jamlab.shipcomputer.ui
 
 import android.annotation.SuppressLint
+import android.view.KeyEvent
 import android.webkit.CookieManager
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
@@ -12,9 +13,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
@@ -69,7 +74,17 @@ fun MainScreen(
     ) {
         AndroidView(
             factory = { ctx ->
-                WebView(ctx).apply {
+                // Subclass to prevent Chromium from natively handling media keys —
+                // BadgeButtonManager dispatches them via JS, so native handling
+                // would cause the voice app to receive the event twice.
+                object : WebView(ctx) {
+                    override fun dispatchKeyEvent(event: KeyEvent?): Boolean {
+                        if (event?.keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE ||
+                            event?.keyCode == KeyEvent.KEYCODE_MEDIA_PLAY ||
+                            event?.keyCode == KeyEvent.KEYCODE_MEDIA_PAUSE) return true
+                        return super.dispatchKeyEvent(event)
+                    }
+                }.apply {
                     settings.apply {
                         javaScriptEnabled = true
                         domStorageEnabled = true
@@ -131,7 +146,9 @@ fun MainScreen(
                     badgeManager.attach(this)
                 }
             },
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.systemBars)
         )
 
         if (isLoading.value) {
@@ -164,6 +181,7 @@ fun MainScreen(
             onClick = { showSettings.value = true },
             modifier = Modifier
                 .align(Alignment.BottomEnd)
+                .navigationBarsPadding()
                 .padding(16.dp)
                 .size(40.dp),
             containerColor = Color(0xFF00E5FF).copy(alpha = 0.4f),
