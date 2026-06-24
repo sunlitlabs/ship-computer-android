@@ -8,6 +8,9 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.os.Build
 import android.os.IBinder
 import android.webkit.WebView
@@ -16,6 +19,10 @@ import dev.jamlab.shipcomputer.MainActivity
 import dev.jamlab.shipcomputer.R
 
 class AudioForegroundService : Service() {
+
+    private var audioManager: AudioManager? = null
+    private var audioFocusRequest: AudioFocusRequest? = null
+    private var previousAudioMode = AudioManager.MODE_NORMAL
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -40,6 +47,48 @@ class AudioForegroundService : Service() {
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
+        prepareAudioForWebRTC()
+    }
+
+    // WebRTC inside an Android WebView requires the host app to set MODE_IN_COMMUNICATION
+    // and hold audio focus — Chrome browser does this internally but WebView does not.
+    // Without this, background services (hotword detectors, OS audio) can hold AudioRecord
+    // and getUserMedia() fails with NotReadableError / "cannot start audio source".
+    private fun prepareAudioForWebRTC() {
+        val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        audioManager = am
+        previousAudioMode = am.mode
+        am.mode = AudioManager.MODE_IN_COMMUNICATION
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val attrs = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                .build()
+            val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                .setAudioAttributes(attrs)
+                .setAcceptsDelayedFocusGain(true)
+                .setOnAudioFocusChangeListener {}
+                .build()
+            audioFocusRequest = req
+            am.requestAudioFocus(req)
+        } else {
+            @Suppress("DEPRECATION")
+            am.requestAudioFocus(null, AudioManager.STREAM_VOICE_CALL, AudioManager.AUDIOFOCUS_GAIN)
+        }
+    }
+
+    private fun releaseAudio() {
+        val am = audioManager ?: return
+        am.mode = previousAudioMode
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            audioFocusRequest?.let { am.abandonAudioFocusRequest(it) }
+        } else {
+            @Suppress("DEPRECATION")
+            am.abandonAudioFocus(null)
+        }
+        audioManager = null
+        audioFocusRequest = null
     }
 
     private fun endSession() {
@@ -91,6 +140,7 @@ class AudioForegroundService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        releaseAudio()
         webViewRef = null
     }
 
